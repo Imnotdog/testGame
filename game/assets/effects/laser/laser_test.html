@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>Laser FX Demo</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: radial-gradient(circle at center, #050814 0, #000 70%);
+      overflow: hidden;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #cfd8ff;
+    }
+    canvas {
+      display: block;
+    }
+    .hint {
+      position: fixed;
+      left: 12px;
+      top: 10px;
+      font-size: 0.85rem;
+      color: #a5b7ff;
+      text-shadow: 0 0 6px #000;
+      user-select: none;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hint">方向鍵旋轉　｜　C：蓄力 / 放開：發射</div>
+
+<script>
+// ========================== 基本畫布 ==========================
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+function resize() {
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener("resize", resize);
+
+// ========================== 玩家 ==========================
+const player = {
+  x: canvas.width / 2,
+  y: canvas.height * 0.65,
+  angle: -Math.PI / 2  // 朝上
+};
+
+// 簡單用方向鍵控制轉向
+const keys = {};
+window.addEventListener("keydown", e => { keys[e.key] = true; });
+window.addEventListener("keyup",   e => { keys[e.key] = false; });
+
+// ========================== 載入貼圖 ==========================
+const laserImgs = {
+  core: new Image(),
+  ring: new Image(),
+  particle: new Image(),
+  bolts: []
+};
+
+laserImgs.core.src = "core.png";
+laserImgs.ring.src = "ring.png";
+laserImgs.particle.src = "particle.png";
+for (let i = 1; i <= 6; i++) {
+  const img = new Image();
+  img.src = `lightning_${i}.png`;
+  laserImgs.bolts.push(img);
+}
+
+let assetsReady = false;
+const allImgs = [laserImgs.core, laserImgs.ring, laserImgs.particle, ...laserImgs.bolts];
+let loadedCount = 0;
+allImgs.forEach(img => {
+  img.onload = () => {
+    loadedCount++;
+    if (loadedCount === allImgs.length) assetsReady = true;
+  };
+});
+
+// ========================== 雷射系統 ==========================
+// 設定：8 個光球、光束寬 25px、震動 0.08 秒
+const LASER_CONFIG = {
+  orbCount: 8,
+  beamWidth: 25,
+  maxLength: 900,
+  shakeDuration: 0.08,
+  chargeSpeed: 1.6,      // 充能速度
+  minChargeToFire: 0.25, // 至少蓄力多少才會發射
+  fireDurationBase: 0.40,
+  fireDurationExtra: 0.35
+};
+
+const laserSystem = {
+  state: "idle",      // idle | charging | firing | cooldown
+  charge: 0,
+  fireTime: 0,
+  fireTimeMax: 0,
+  orbs: [],           // 光球
+  bolts: [],          // 閃電
+  shockwaves: [],     // 衝擊波
+  shakeTime: 0
+};
+
+// 建立光球
+function initOrbs() {
+  laserSystem.orbs.length = 0;
+  for (let i = 0; i < LASER_CONFIG.orbCount; i++) {
+    laserSystem.orbs.push({
+      angle: (Math.PI * 2 / LASER_CONFIG.orbCount) * i,
+      radius: 120,
+      sizePhase: Math.random() * Math.PI * 2
+    });
+  }
+}
+
+// 產生閃電粒子
+function spawnBolt(x, y, baseAngle) {
+  if (!assetsReady) return;
+  const img = laserImgs.bolts[Math.floor(Math.random() * laserImgs.bolts.length)];
+  laserSystem.bolts.push({
+    x,
+    y,
+    angle: baseAngle + (Math.random() * 0.7 - 0.35),
+    life: 0.08 + Math.random() * 0.12,
+    maxLife: 0.08 + Math.random() * 0.12,
+    img
+  });
+}
+
+// 產生衝擊波（shockwave）
+function spawnShockwave(x, y) {
+  laserSystem.shockwaves.push({
+    x, y,
+    r: 40,
+    maxR: 300,
+    alpha: 1
+  });
+}
+
+// 更新雷射狀態
+function updateLaser(dt, player, holdingLaserKey) {
+  // 角度控制（左右鍵）
+  const angVel = 3.6;
+  if (keys["ArrowLeft"])  player.angle -= angVel * dt;
+  if (keys["ArrowRight"]) player.angle += angVel * dt;
+
+  // 狀態機
+  if (laserSystem.state === "idle") {
+    if (holdingLaserKey) {
+      laserSystem.state = "charging";
+      laserSystem.charge = 0;
+      initOrbs();
+    }
+  } else if (laserSystem.state === "charging") {
+    if (holdingLaserKey) {
+      laserSystem.charge = Math.min(1, laserSystem.charge + dt * LASER_CONFIG.chargeSpeed);
+    } else {
+      // 放開鍵，決定是否發射
+      if (laserSystem.charge >= LASER_CONFIG.minChargeToFire) {
+        laserSystem.state = "firing";
+        laserSystem.fireTimeMax =
+          LASER_CONFIG.fireDurationBase + LASER_CONFIG.fireDurationExtra * laserSystem.charge;
+        laserSystem.fireTime = laserSystem.fireTimeMax;
+
+        // 發射瞬間：爆閃 + 衝擊波 + 震動
+        spawnShockwave(player.x, player.y);
+        laserSystem.shakeTime = LASER_CONFIG.shakeDuration;
+      } else {
+        // 蓄力太少，直接取消
+        laserSystem.state = "idle";
+      }
+    }
+  } else if (laserSystem.state === "firing") {
+    laserSystem.fireTime -= dt;
+    if (laserSystem.fireTime <= 0) {
+      laserSystem.state = "idle";
+      laserSystem.charge = 0;
+      laserSystem.orbs.length = 0;
+    }
+  }
+
+  // 光球更新（僅在 charging）
+  if (laserSystem.state === "charging") {
+    const baseRadius = 120 - laserSystem.charge * 40; // 蓄力越高越靠近
+    const orbSpeed = 1.5 + laserSystem.charge * 4;
+    for (const o of laserSystem.orbs) {
+      o.angle += orbSpeed * dt;
+      o.radius += (baseRadius - o.radius) * dt * 6;
+      o.sizePhase += 3 * dt;
+    }
+  }
+
+  // 閃電更新
+  for (let i = laserSystem.bolts.length - 1; i >= 0; i--) {
+    const b = laserSystem.bolts[i];
+    b.life -= dt;
+    if (b.life <= 0) {
+      laserSystem.bolts.splice(i, 1);
+    }
+  }
+
+  // 衝擊波更新
+  for (let i = laserSystem.shockwaves.length - 1; i >= 0; i--) {
+    const s = laserSystem.shockwaves[i];
+    s.r += 900 * dt;
+    s.alpha = 1 - s.r / s.maxR;
+    if (s.alpha <= 0) laserSystem.shockwaves.splice(i, 1);
+  }
+
+  // 震動更新
+  if (laserSystem.shakeTime > 0) {
+    laserSystem.shakeTime -= dt;
+    if (laserSystem.shakeTime < 0) laserSystem.shakeTime = 0;
+  }
+
+  // 在 charging / firing 時機產生閃電
+  if (laserSystem.state === "charging") {
+    const chance = 0.3 * laserSystem.charge; // charge 越高越頻繁
+    if (Math.random() < chance * dt * 60) {
+      const rx = player.x + (Math.random() - 0.5) * 80;
+      const ry = player.y + (Math.random() - 0.5) * 80;
+      spawnBolt(rx, ry, player.angle);
+    }
+  } else if (laserSystem.state === "firing") {
+    const t = 1 - laserSystem.fireTime / laserSystem.fireTimeMax;
+    const len = LASER_CONFIG.maxLength * (0.9 + 0.1 * Math.sin(t * 10));
+    const dx = Math.cos(player.angle);
+    const dy = Math.sin(player.angle);
+
+    // 光束上隨機位置產生閃電
+    if (Math.random() < 0.6) {
+      const k = Math.random() * 0.8 + 0.1;
+      const bx = player.x + dx * len * k + (Math.random() - 0.5) * 40;
+      const by = player.y + dy * len * k + (Math.random() - 0.5) * 40;
+      spawnBolt(bx, by, player.angle);
+    }
+
+    // 尾端噴電
+    if (Math.random() < 0.45) {
+      const bx = player.x + dx * len;
+      const by = player.y + dy * len;
+      spawnBolt(bx, by, player.angle);
+    }
+  }
+}
+
+// 繪製雷射
+function drawLaser(ctx, player) {
+  if (!assetsReady) return;
+
+  // 震動 transform
+  ctx.save();
+  if (laserSystem.shakeTime > 0) {
+    const t = laserSystem.shakeTime / LASER_CONFIG.shakeDuration;
+    const mag = 12 * t;
+    const ox = (Math.random() - 0.5) * mag;
+    const oy = (Math.random() - 0.5) * mag;
+    ctx.translate(ox, oy);
+  }
+
+  const angle = player.angle;
+
+  // Phase 1: Charging
+  if (laserSystem.state === "charging" && laserSystem.charge > 0) {
+    // 核心 core
+    ctx.save();
+    ctx.translate(player.x, player.y);
+    const s = 0.8 + 0.4 * laserSystem.charge +
+      0.12 * Math.sin(performance.now() * 0.015);
+    ctx.globalAlpha = 0.5 + 0.5 * laserSystem.charge;
+    ctx.drawImage(laserImgs.core, -64 * s, -64 * s, 128 * s, 128 * s);
+    ctx.restore();
+
+    // 光球 orbs
+    for (const o of laserSystem.orbs) {
+      const r = o.radius;
+      const ox = player.x + Math.cos(o.angle) * r;
+      const oy = player.y + Math.sin(o.angle) * r;
+      const size = 0.35 + 0.15 * Math.sin(o.sizePhase);
+
+      ctx.save();
+      ctx.globalAlpha = 0.4 + 0.6 * laserSystem.charge;
+      ctx.translate(ox, oy);
+      ctx.drawImage(laserImgs.particle, -40 * size, -40 * size, 80 * size, 80 * size);
+      ctx.restore();
+    }
+
+    // 外向內縮的圓環（2~3 層）
+    const ringCount = 2 + (laserSystem.charge > 0.6 ? 1 : 0);
+    for (let i = 0; i < ringCount; i++) {
+      const t = (performance.now() * 0.0015 + i * 0.4) % 1;
+      const radiusScale = 1.6 - t * 0.9; // 由外往內縮
+      ctx.save();
+      ctx.translate(player.x, player.y);
+      ctx.rotate((i % 2 === 0 ? 1 : -1) * performance.now() * 0.0006);
+      ctx.globalAlpha = 0.25 + 0.35 * laserSystem.charge;
+      const size = 220 * radiusScale;
+      ctx.drawImage(laserImgs.ring, -size / 2, -size / 2, size, size);
+      ctx.restore();
+    }
+  }
+
+  // Phase 2 & 3: Firing（震撼主光束 + 節點 + 閃電 + 衝擊波）
+  if (laserSystem.state === "firing") {
+    const t = 1 - laserSystem.fireTime / laserSystem.fireTimeMax;
+    const dx = Math.cos(angle);
+    const dy = Math.sin(angle);
+    const len = LASER_CONFIG.maxLength * (0.9 + 0.1 * Math.sin(t * 16));
+
+    // 衝擊波 shockwave
+    for (const s of laserSystem.shockwaves) {
+      ctx.save();
+      ctx.globalAlpha = s.alpha * 0.8;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(160,220,255,0.85)";
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // 主光束 - 外層
+    ctx.save();
+    ctx.lineWidth = LASER_CONFIG.beamWidth * 1.6;
+    ctx.strokeStyle = "rgba(120,190,255,0.35)";
+    ctx.beginPath();
+    ctx.moveTo(player.x, player.y);
+    ctx.lineTo(player.x + dx * len, player.y + dy * len);
+    ctx.stroke();
+    ctx.restore();
+
+    // 主光束 - 內層
+    ctx.save();
+    ctx.lineWidth = LASER_CONFIG.beamWidth;
+    ctx.strokeStyle = "rgba(200,240,255,0.95)";
+    ctx.beginPath();
+    ctx.moveTo(player.x, player.y);
+    ctx.lineTo(player.x + dx * len, player.y + dy * len);
+    ctx.stroke();
+    ctx.restore();
+
+    // 光束節點（沿線的 ring）
+    const nodeCount = 5;
+    for (let i = 1; i <= nodeCount; i++) {
+      const k = i / (nodeCount + 1);
+      const nx = player.x + dx * len * k;
+      const ny = player.y + dy * len * k;
+      const pulse = 0.85 + 0.25 * Math.sin(performance.now() * 0.006 + i);
+      ctx.save();
+      ctx.translate(nx, ny);
+      ctx.rotate(performance.now() * 0.001 * (i % 2 === 0 ? 1 : -1));
+      ctx.globalAlpha = 0.6 + 0.3 * Math.sin(performance.now() * 0.004 + i);
+      const size = 80 * pulse;
+      ctx.drawImage(laserImgs.ring, -size/2, -size/2, size, size);
+      ctx.restore();
+    }
+
+    // 發射根部的核心爆閃
+    ctx.save();
+    ctx.translate(player.x, player.y);
+    const s = 1.2 + 0.7 * (1 - t);
+    ctx.globalAlpha = 0.9 * (1 - t);
+    ctx.drawImage(laserImgs.core, -70*s, -70*s, 140*s, 140*s);
+    ctx.restore();
+  }
+
+  // 閃電粒子（charging + firing 都會用）
+  for (const b of laserSystem.bolts) {
+    const alpha = b.life / b.maxLife;
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.9;
+    ctx.translate(b.x, b.y);
+    ctx.rotate(b.angle);
+    const w = 140, h = 140;
+    ctx.drawImage(b.img, -w/2, -h/2, w, h);
+    ctx.restore();
+  }
+
+  ctx.restore(); // 結束震動 transform
+}
+
+// ========================== 主迴圈 ==========================
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min((now - last) / 1000, 0.033);
+  last = now;
+
+  // 更新雷射
+  const holdingC = keys["c"] || keys["C"];
+  updateLaser(dt, player, holdingC);
+
+  // 繪製背景
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  const bgGrad = ctx.createRadialGradient(
+    canvas.width/2, canvas.height*0.5, 0,
+    canvas.width/2, canvas.height*0.5, canvas.height*0.8
+  );
+  bgGrad.addColorStop(0, "rgba(20,40,80,0.9)");
+  bgGrad.addColorStop(1, "rgba(0,0,0,1)");
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.restore();
+
+  // 畫雷射（放在玩家前畫）
+  drawLaser(ctx, player);
+
+  // 畫玩家（簡單代替）
+  ctx.save();
+  ctx.translate(player.x, player.y);
+  ctx.rotate(player.angle);
+  ctx.fillStyle = "#88e0ff";
+  ctx.beginPath();
+  ctx.moveTo(0, -18);
+  ctx.lineTo(12, 14);
+  ctx.lineTo(-12, 14);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

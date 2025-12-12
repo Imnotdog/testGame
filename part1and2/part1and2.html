@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>16 方位太空船顯示作業</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: #000; /* 黑色宇宙背景 */
+      color: #eee;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .scene {
+      position: relative;
+      width: 400px;
+      height: 400px;
+      border: 1px solid #333;
+      border-radius: 8px;
+      background: radial-gradient(circle at 50% 30%, #222 0, #050505 65%, #000 100%);
+      box-shadow: 0 0 30px rgba(0, 255, 255, 0.15);
+      overflow: hidden;
+    }
+
+    .spaceship-wrapper {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 90px;
+      height: 90px;
+      transform: translate(-50%, -50%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #spaceship-img {
+      width: 90px;
+      height: 90px;
+      image-rendering: crisp-edges;
+      image-rendering: pixelated;
+    }
+
+    /* 右下角羅盤顯示 */
+    .hud {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      background: rgba(0, 0, 0, 0.7);
+      border: 1px solid rgba(0, 255, 255, 0.4);
+      font-size: 13px;
+      line-height: 1.4;
+      text-align: right;
+      min-width: 120px;
+    }
+
+    .hud-title {
+      font-size: 12px;
+      color: #7de0ff;
+      margin-bottom: 2px;
+    }
+
+    .hud-dir {
+      font-weight: 600;
+      font-size: 14px;
+      color: #fff;
+    }
+
+    .hud-sub {
+      font-size: 11px;
+      color: #bbb;
+    }
+
+    .hint {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      font-size: 12px;
+      color: #ccc;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 6px 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      max-width: 220px;
+    }
+
+    .hint code {
+      font-size: 11px;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 1px 3px;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <div class="scene">
+    <div class="spaceship-wrapper">
+      <!-- 初始方向：北(N) -->
+      <img id="spaceship-img" src="ship_00_N.png" alt="spaceship" />
+    </div>
+
+    <div class="hint">
+      數字鍵盤：16 方位 (優先)<br />
+      方向鍵：8 方位<br />
+      鬆開按鍵：維持目前朝向
+    </div>
+
+    <div class="hud">
+      <div class="hud-title">羅盤方向</div>
+      <div class="hud-dir" id="compass-text">N</div>
+      <div class="hud-sub" id="compass-sub">0°</div>
+    </div>
+  </div>
+
+  <script>
+    // === 影像路徑設定：請確保檔名與資料夾一致 ===
+    const dirNames = [
+      "N", "NNE", "NE", "ENE",
+      "E", "ESE", "SE", "SSE",
+      "S", "SSW", "SW", "WSW",
+      "W", "WNW", "NW", "NNW"
+    ];
+
+    const shipImages = dirNames.map((name, i) =>
+      `ship_${String(i).padStart(2, "0")}_${name}.png`
+      // 如果要改成 BMP，用下面這行取代：
+      // `ship_${String(i).padStart(2, "0")}_${name}.bmp`
+    );
+
+    const shipImg = document.getElementById("spaceship-img");
+    const compassText = document.getElementById("compass-text");
+    const compassSub = document.getElementById("compass-sub");
+
+    // === 鍵盤狀態 ===
+    const pressedNumpad = new Set(); // 優先使用
+    const pressedArrows = new Set();
+
+    const numpadVectors = {
+      "1": { x: -1, y:  1 },
+      "2": { x:  0, y:  1 },
+      "3": { x:  1, y:  1 },
+      "4": { x: -1, y:  0 },
+      "6": { x:  1, y:  0 },
+      "7": { x: -1, y: -1 },
+      "8": { x:  0, y: -1 },
+      "9": { x:  1, y: -1 }
+      // 5、0 不參與方向
+    };
+
+    const arrowVectors = {
+      "ArrowUp":    { x:  0, y: -1 },
+      "ArrowDown":  { x:  0, y:  1 },
+      "ArrowLeft":  { x: -1, y:  0 },
+      "ArrowRight": { x:  1, y:  0 }
+    };
+
+    // === 旋轉狀態 ===
+    let currentAngle = 0; // 目前實際角度（以度為單位，0° = 北，上方）
+    let targetAngle = 0;  // 目標角度
+    let lastTime = performance.now();
+    const fullTurnPerSec = 360; // 1 秒轉一圈
+    const sectorAngle = 360 / 16; // 22.5°
+
+    // 初始顯示
+    updateShipSpriteFromAngle(currentAngle);
+
+    function normalizeAngle(angle) {
+      // 將角度 normalize 到 0～360
+      angle = angle % 360;
+      if (angle < 0) angle += 360;
+      return angle;
+    }
+
+    function shortestAngularDistance(from, to) {
+      // 回傳 from -> to 的最短角度差（-180 ~ 180）
+      let diff = normalizeAngle(to) - normalizeAngle(from);
+      if (diff > 180) diff -= 360;
+      if (diff < -180) diff += 360;
+      return diff;
+    }
+
+    function angleToIndex(angle) {
+      // 把 0~360 度映射到 0~15 的索引
+      const normalized = normalizeAngle(angle);
+      const index = Math.round(normalized / sectorAngle) % 16;
+      return index;
+    }
+
+    function updateShipSpriteFromAngle(angle) {
+      const idx = angleToIndex(angle);
+      shipImg.src = shipImages[idx];
+      compassText.textContent = dirNames[idx];
+      compassSub.textContent = `${normalizeAngle(angle).toFixed(1)}°`;
+    }
+
+    function computeDirectionAngleFromKeys() {
+      // 1. 優先使用數字鍵盤
+      if (pressedNumpad.size > 0) {
+        let sx = 0, sy = 0;
+        for (const key of pressedNumpad) {
+          const v = numpadVectors[key];
+          if (v) {
+            sx += v.x;
+            sy += v.y;
+          }
+        }
+        if (sx !== 0 || sy !== 0) {
+          const rad = Math.atan2(sy, sx);
+          const deg = (rad * 180 / Math.PI + 450) % 360; // 0° = 北，順時針
+          return deg;
+        }
+      }
+
+      // 2. 沒有 numpad，改用方向鍵（8 方位）
+      if (pressedArrows.size > 0) {
+        let sx = 0, sy = 0;
+        for (const key of pressedArrows) {
+          const v = arrowVectors[key];
+          if (v) {
+            sx += v.x;
+            sy += v.y;
+          }
+        }
+        if (sx !== 0 || sy !== 0) {
+          const rad = Math.atan2(sy, sx);
+          const deg = (rad * 180 / Math.PI + 450) % 360;
+          return deg;
+        }
+      }
+
+      // 3. 都沒有按方向鍵，回傳 null ⇒ 不改變 targetAngle
+      return null;
+    }
+
+    function updateTargetFromKeys() {
+      const angle = computeDirectionAngleFromKeys();
+      if (angle == null) {
+        // 不改變 targetAngle，保持目前方向
+        return;
+      }
+      targetAngle = angle;
+    }
+
+    window.addEventListener("keydown", (e) => {
+      if (e.repeat) return;
+
+      if (e.code.startsWith("Numpad") && e.key >= "0" && e.key <= "9") {
+        pressedNumpad.add(e.key);
+        updateTargetFromKeys();
+      } else if (arrowVectors[e.code]) {
+        pressedArrows.add(e.code);
+        e.preventDefault(); // 避免畫面捲動
+        updateTargetFromKeys();
+      }
+    });
+
+    window.addEventListener("keyup", (e) => {
+      if (e.code.startsWith("Numpad") && e.key >= "0" && e.key <= "9") {
+        pressedNumpad.delete(e.key);
+        updateTargetFromKeys();
+      } else if (arrowVectors[e.code]) {
+        pressedArrows.delete(e.code);
+        updateTargetFromKeys();
+      }
+    });
+
+    // === 主動畫迴圈：讓 currentAngle 用 1 秒/圈 的速度逼近 targetAngle ===
+    function loop(now) {
+      const dt = (now - lastTime) / 1000; // 秒
+      lastTime = now;
+
+      const diff = shortestAngularDistance(currentAngle, targetAngle);
+      if (Math.abs(diff) > 0.01) {
+        const maxStep = fullTurnPerSec * dt;
+        const step = Math.sign(diff) * Math.min(Math.abs(diff), maxStep);
+        currentAngle = normalizeAngle(currentAngle + step);
+        updateShipSpriteFromAngle(currentAngle);
+      }
+
+      requestAnimationFrame(loop);
+    }
+
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>

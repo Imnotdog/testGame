@@ -1,0 +1,343 @@
+﻿<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>Top-Down Space Combat v8 (Dash Burst)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: radial-gradient(circle at top, #141824 0, #050810 55%, #000 100%);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #f5f5f5;
+    }
+    #gameCanvas { position: absolute; inset: 0; display: block; }
+
+    .hud {
+      position: absolute;
+      top: 10px; left: 10px;
+      display: flex; flex-direction: column; gap: 8px;
+      pointer-events: none;
+      text-shadow: 0 0 4px #000;
+      font-size: 14px;
+    }
+    .hud-row { display: flex; align-items: center; gap: 8px; }
+
+    .icon {
+      width: 24px; height: 24px;
+      border-radius: 999px;
+      background: radial-gradient(circle, #fff 0, #aaa 40%, #333 85%);
+      box-shadow: 0 0 6px rgba(0,0,0,0.8);
+      position: relative; overflow: hidden;
+    }
+    .icon.hp::before {
+      content: "";
+      position: absolute; inset: 3px;
+      background:
+        radial-gradient(circle at 30% 30%, rgba(255,255,255,0.9) 0, transparent 35%),
+        radial-gradient(circle at 70% 70%, rgba(255,0,0,0.9) 0, transparent 40%),
+        linear-gradient(135deg, #ff5522, #ff0033);
+      clip-path: polygon(50% 5%, 90% 35%, 75% 95%, 25% 95%, 10% 35%);
+    }
+    .icon.shield::before {
+      content: "";
+      position: absolute; inset: 2px;
+      background: radial-gradient(circle, #8fd6ff 0, #2575fc 40%, #020b26 85%);
+      mask-image: radial-gradient(circle, #000 0, #000 55%, transparent 56%);
+    }
+    .icon.torp::before {
+      content: "";
+      position: absolute; inset: 3px;
+      background:
+        radial-gradient(circle at 30% 30%, #fff 0, transparent 35%),
+        radial-gradient(circle at 70% 70%, #5a2bff 0, transparent 45%),
+        radial-gradient(circle, #9f4bff 0, #3d0e66 60%);
+    }
+    .icon.laser::before {
+      content: "";
+      position: absolute;
+      left: 50%; top: 3px;
+      width: 8px; height: 18px;
+      transform: translateX(-50%);
+      background:
+        radial-gradient(circle at 50% 0, #fff 0, #9cf 50%, transparent 70%),
+        linear-gradient(to bottom, rgba(180,230,255,0.9), rgba(100,180,255,0.2));
+      box-shadow: 0 0 6px rgba(150,210,255,0.9);
+      border-radius: 999px;
+    }
+
+    .bar-container {
+      width: 220px; height: 10px;
+      border-radius: 999px;
+      background: rgba(0,0,0,0.65);
+      overflow: hidden;
+      box-shadow:
+        0 0 3px rgba(0,0,0,0.8),
+        inset 0 0 4px rgba(255,255,255,0.05);
+    }
+    .bar-fill {
+      height: 100%; width: 0%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #ff9966, #ff0033);
+      transition: width 0.08s linear;
+    }
+    .bar-fill.shield { background: linear-gradient(90deg, #68e0ff, #265dff); }
+    .bar-fill.torp { background: linear-gradient(90deg, #c38bff, #6f2bff); }
+    .bar-fill.laser { background: linear-gradient(90deg, #b8e3ff, #3fa9ff); }
+    .bar-fill.hull { background: linear-gradient(90deg, #7aff7a, #2ba32b); }
+
+    .top-right-panel {
+      position: absolute;
+      top: 8px; right: 8px;
+      background: rgba(5,7,15,0.9);
+      border-radius: 12px;
+      padding: 8px 10px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.9);
+      display: flex; flex-direction: column; gap: 4px;
+      font-size: 13px;
+    }
+    .top-right-panel label {
+      display: flex; align-items: center; gap: 4px;
+    }
+    .top-right-panel select {
+      background: #151a2a; color: #e9efff;
+      border-radius: 8px;
+      border: 1px solid #3a4a7a;
+      padding: 2px 6px;
+      font-size: 13px;
+    }
+
+    /* Corner compass (magic style) */
+    .corner-compass {
+      position: absolute;
+      right: 16px; bottom: 16px;
+      width: 140px; height: 140px;
+      pointer-events: none;
+    }
+    .corner-compass .tilt {
+      width: 100%; height: 100%;
+      transform: rotateX(18deg);
+      transform-style: preserve-3d;
+    }
+    .corner-compass .shell {
+      position: relative;
+      width: 100%; height: 100%;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 50% 30%, rgba(0,255,235,0.25), transparent 42%),
+        radial-gradient(circle at 50% 50%, rgba(0,0,40,0.8), rgba(0,0,0,0.95));
+      box-shadow: 0 0 0 4px rgba(30,40,80,0.8), 0 0 0 9px rgba(0,0,0,0.8), 0 10px 25px rgba(0,0,0,0.85);
+      overflow: hidden;
+    }
+    .corner-compass .face {
+      position: absolute;
+      inset: 12%;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 50% 50%, rgba(50,190,255,0.45), rgba(0,30,60,0.9) 48%, rgba(0,0,0,0.95) 70%);
+      box-shadow: inset 0 0 14px rgba(0,0,0,0.8);
+    }
+    .corner-compass .runes {
+      position: absolute;
+      inset: 24%;
+      border-radius: 50%;
+      border: 1px dashed rgba(160,200,255,0.4);
+      opacity: 0.9;
+      animation: spin-runes 16s linear infinite reverse;
+    }
+    .corner-compass .glow {
+      position: absolute;
+      inset: 6%;
+      border-radius: 50%;
+      box-shadow: 0 0 20px rgba(0,255,200,0.18), 0 0 28px rgba(100,160,255,0.24);
+      pointer-events: none;
+    }
+    .corner-compass .needle {
+      position: absolute;
+      left: 50%; top: 50%;
+      width: 0; height: 0;
+      transform-origin: 50% 50%;
+      transform: translate(-50%, -50%) rotate(0deg);
+      transition: transform 0.15s cubic-bezier(0.35, 1.4, 0.64, 1);
+      filter: drop-shadow(0 0 10px rgba(255,255,200,0.8));
+    }
+    .corner-compass .needle::before,
+    .corner-compass .needle::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      border-left: 8px solid transparent;
+      border-right: 8px solid transparent;
+    }
+    .corner-compass .needle::before {
+      top: -70px;
+      border-bottom: 70px solid rgba(255,240,150,0.9);
+      filter: drop-shadow(0 0 8px rgba(255,240,150,0.9)) drop-shadow(0 0 10px rgba(0,255,220,0.6));
+    }
+    .corner-compass .needle::after {
+      bottom: -70px;
+      border-top: 70px solid rgba(130,170,255,0.9);
+      filter: drop-shadow(0 0 8px rgba(130,170,255,0.8));
+    }
+    .corner-compass .needle-cap {
+      position: absolute;
+      left: 50%; top: 50%;
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      background: radial-gradient(circle, #f5f7ff 0, #c2c9ff 40%, #111828 80%);
+      transform: translate(-50%, -50%);
+      box-shadow: 0 0 4px rgba(0,0,0,0.9), inset 0 0 4px rgba(0,0,0,0.8);
+    }
+    .corner-compass .dir-label {
+      position: absolute;
+      width: 100%;
+      text-align: center;
+      bottom: 8px;
+      font-size: 12px;
+      letter-spacing: 1px;
+      color: #d6e5ff;
+      text-shadow: 0 0 6px rgba(0,0,0,0.9);
+      pointer-events: none;
+    }
+    @keyframes spin-runes { from { transform: rotate(0deg);} to { transform: rotate(-360deg);} }
+
+    /* Debug overlay */
+    .debug-panel {
+      position: absolute;
+      left: 10px;
+      bottom: 10px;
+      min-width: 240px;
+      max-width: 320px;
+      background: rgba(0,0,0,0.65);
+      border: 1px solid rgba(120,180,255,0.35);
+      border-radius: 8px;
+      padding: 8px;
+      font-family: "Fira Code", Consolas, monospace;
+      font-size: 12px;
+      color: #cde3ff;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+    .debug-panel.visible { opacity: 1; }
+    .debug-panel h4 { margin: 0 0 6px 0; font-size: 12px; color: #8fd6ff; }
+    .debug-panel pre { margin: 0; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+
+<div class="hud">
+  <div class="hud-row">
+    <div class="icon hp"></div>
+    <div class="bar-container"><div id="hpBar" class="bar-fill"></div></div>
+  </div>
+  <div class="hud-row">
+    <div class="icon hp"></div>
+    <div class="bar-container"><div id="hullBar" class="bar-fill hull"></div></div>
+    <span id="hullLabel" style="font-size:12px;opacity:0.8;">100%</span>
+  </div>
+  <div class="hud-row">
+    <div class="icon shield"></div>
+    <div class="bar-container"><div id="shieldBar" class="bar-fill shield"></div></div>
+  </div>
+  <div class="hud-row">
+    <div class="icon torp"></div>
+    <div class="bar-container"><div id="torpBar" class="bar-fill torp"></div></div>
+    <span id="torpFront" style="font-size:12px;opacity:0.8;">12/12</span>
+    <span id="torpRear" style="font-size:12px;opacity:0.8;">5/5</span>
+    <span id="torpFrontOffline" style="font-size:12px;color:#ffcc66;opacity:0;"></span>
+    <span id="torpRearOffline" style="font-size:12px;color:#ffcc66;opacity:0;"></span>
+    <span id="torpFrontJam" style="font-size:12px;color:#ff8a8a;opacity:0;"></span>
+    <span id="torpRearJam" style="font-size:12px;color:#ff8a8a;opacity:0;"></span>
+  </div>
+  <div class="hud-row">
+    <div class="icon laser"></div>
+    <div class="bar-container"><div id="laserBar" class="bar-fill laser"></div></div>
+    <span id="laserOffline" style="font-size:12px;color:#ffcc66;opacity:0;"></span>
+  </div>
+</div>
+
+<div class="top-right-panel">
+  <label>難度：
+    <select id="difficultySelect">
+      <option value="easy">簡單</option>
+      <option value="normal" selected>普通</option>
+      <option value="hard">困難</option>
+      <option value="god">無敵模式</option>
+    </select>
+  </label>
+  <label style="display:flex;align-items:center;gap:4px;">
+    <input type="checkbox" id="deathToggle" checked />
+    <span>允許死亡</span>
+  </label>
+  <label>勢力：
+    <select id="factionSelect">
+      <option value="low" selected>低勢力</option>
+      <option value="mid">中勢力</option>
+      <option value="high" disabled>高勢力（之後）</option>
+      <option value="cth" disabled>克總之光（之後）</option>
+    </select>
+  </label>
+  <div id="roundLabel">回合：1</div>
+</div>
+
+<div class="top-right-panel" style="top: 220px; width: 260px;">
+  <div style="font-weight:600;">LAN 連線</div>
+  <label style="font-size:12px;">WSS</label>
+  <input id="netWs" style="width:100%;" value="wss://marie-nonfrangible-impressedly.ngrok-free.dev">
+  <label style="font-size:12px;">Room</label>
+  <input id="netRoom" style="width:100%;" value="class-001">
+  <label style="font-size:12px;">暱稱</label>
+  <input id="netNick" style="width:100%;" value="Player">
+  <div style="display:flex;gap:8px;margin-top:6px;align-items:center;">
+    <label style="font-size:12px;"><input type="radio" name="netMode" value="host" checked> Host</label>
+    <label style="font-size:12px;"><input type="radio" name="netMode" value="client"> Client</label>
+    <button id="netConnect" style="flex:1;">Connect</button>
+  </div>
+  <div style="font-size:12px;margin-top:6px;">
+    <div>自己：<span id="netSelf">-</span></div>
+    <div>Host：<span id="netHost">-</span></div>
+    <div>對手：<span id="netPeer">-</span></div>
+  </div>
+  <div style="margin-top:6px;display:flex;gap:6px;">
+    <input id="netChat" placeholder="聊天" style="flex:1;">
+    <button id="netSend" disabled>Send</button>
+  </div>
+  <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
+    <button id="netStart" disabled style="flex:1 0 45%;">開始</button>
+    <button id="netPause" disabled style="flex:1 0 45%;">暫停</button>
+    <button id="netResume" disabled style="flex:1 0 45%;">續</button>
+    <button id="netEnd" disabled style="flex:1 0 45%;">結束</button>
+  </div>
+  <div id="netLog" style="margin-top:6px;font-size:12px;max-height:120px;overflow:auto;white-space:pre-line;background:rgba(0,0,0,0.4);padding:6px;border-radius:6px;border:1px solid rgba(120,180,255,0.3);"></div>
+</div>
+
+<div class="corner-compass">
+  <div class="tilt">
+    <div class="shell">
+      <div class="glow"></div>
+      <div class="face">
+        <div class="sigil"></div>
+        <div class="runes"></div>
+        <div id="miniNeedle" class="needle"></div>
+        <div class="needle-cap"></div>
+      </div>
+      <div class="dir-label"><span id="miniDirLabel">N</span></div>
+    </div>
+  </div>
+</div>
+
+<div id="debugPanel" class="debug-panel">
+  <h4>Debug (F3 ????1/2/3/4=??敺?撌??單葫閰血摰?</h4>
+  <pre id="debugText">--</pre>
+</div>
+
+<script type="module" src="./main.js"></script>
+</body>
+</html>
+

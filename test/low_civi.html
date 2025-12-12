@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Low Civilization DEMO Template v1</title>
+<style>
+body { margin:0; background:#000; overflow:hidden; }
+#ui { position:fixed; top:10px; right:10px; color:white; font:16px monospace; }
+button { margin:2px; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="ui">
+  <div><b>Difficulty</b></div>
+  <button onclick="setDifficulty('easy')">Easy</button>
+  <button onclick="setDifficulty('normal')">Normal</button>
+  <button onclick="setDifficulty('hard')">Hard</button>
+  <button onclick="setDifficulty('god')">God</button>
+  <hr>
+  <button onclick="startDemo()">Start Low Civilization DEMO</button>
+  <div id="roundInfo"></div>
+</div>
+
+<script>
+/* ======================================================
+   Core Engine
+====================================================== */
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+let keys = {};
+let difficulty = "normal";
+let player, enemies = [], bullets = [], enemyBullets = [];
+let boss = null;
+let round = 0;
+
+function rand(a,b){ return Math.random()*(b-a)+a; }
+function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+function angleTo(ax,ay,bx,by){ return Math.atan2(by-ay, bx-ax); }
+
+/* ======================================================
+   Player
+====================================================== */
+class Player {
+  constructor(){
+    this.x = canvas.width/2;
+    this.y = canvas.height*0.8;
+    this.angle = 0;
+
+    this.speed = 0;
+    this.maxSpeed = 260;
+    this.accel = 600;
+    this.decel = 500;
+
+    this.hp = 100;
+    this.iframes = 0;
+    this.flashTimer = 0;
+
+    // Dash
+    this.dashTimer = 0;
+    this.dashDur = 0.18;
+    this.dashDir = {x:0,y:0};
+    this.dashRecovery = 0;  // 阻尼階段
+    this.dashRecoverySpeed = 0;
+    this.dashRecoveryDecay = 850;
+  }
+
+  update(dt){
+    /* 方向輸入 */
+    let dx=0, dy=0;
+    if(keys["ArrowLeft"]) dx -= 1;
+    if(keys["ArrowRight"]) dx += 1;
+    if(keys["ArrowUp"]) dy -= 1;
+    if(keys["ArrowDown"]) dy += 1;
+
+    /* 計算角度 */
+    if(dx!==0 || dy!==0){
+      this.angle = Math.atan2(dy,dx);
+      this.speed += this.accel * dt;
+      if(this.speed > this.maxSpeed) this.speed = this.maxSpeed;
+    } else {
+      this.speed -= this.decel * dt;
+      if(this.speed < 0) this.speed = 0;
+    }
+
+    /* Dash 高速 */
+    if(this.dashTimer > 0){
+      this.dashTimer -= dt;
+      this.x += this.dashDir.x * 550 * dt;
+      this.y += this.dashDir.y * 550 * dt;
+
+      if(this.dashTimer <= 0){
+        // 進入阻尼階段
+        this.dashRecovery = 0.18;
+        this.dashRecoverySpeed = 320;
+      }
+
+    /* Dash 阻尼 */
+    } else if(this.dashRecovery > 0){
+      this.dashRecovery -= dt;
+      let v = this.dashRecoverySpeed;
+      this.x += Math.cos(this.angle) * v * dt;
+      this.y += Math.sin(this.angle) * v * dt;
+      this.dashRecoverySpeed -= this.dashRecoveryDecay * dt;
+      if(this.dashRecoverySpeed < 0) this.dashRecoverySpeed = 0;
+
+    /* 一般移動 */
+    } else {
+      this.x += Math.cos(this.angle) * this.speed * dt;
+      this.y += Math.sin(this.angle) * this.speed * dt;
+    }
+
+    /* 玩家邊界 */
+    this.x = Math.max(20, Math.min(canvas.width-20, this.x));
+    this.y = Math.max(20, Math.min(canvas.height-20, this.y));
+
+    if(this.iframes>0) this.iframes -= dt;
+
+    if(this.hp < 30) this.flashTimer = (this.flashTimer + dt) % 0.2;
+  }
+
+  draw(){
+    ctx.save();
+    ctx.translate(this.x,this.y);
+    ctx.rotate(this.angle);
+
+    if(this.hp < 30 && this.flashTimer < 0.1)
+      ctx.fillStyle="rgb(255,80,80)";
+    else
+      ctx.fillStyle="#88f";
+
+    ctx.beginPath();
+    ctx.moveTo(18,0);
+    ctx.lineTo(-14,-10);
+    ctx.lineTo(-14,10);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+  }
+}
+
+/* ======================================================
+   Player Actions
+====================================================== */
+function fireTorpedo(){
+  bullets.push({
+    x:player.x + Math.cos(player.angle)*24,
+    y:player.y + Math.sin(player.angle)*24,
+    vx:Math.cos(player.angle)*400,
+    vy:Math.sin(player.angle)*400,
+    life:3
+  });
+}
+
+function dash(){
+  if(player.dashTimer<=0 && player.dashRecovery<=0){
+    player.dashTimer = player.dashDur;
+    player.dashDir = {x:Math.cos(player.angle), y:Math.sin(player.angle)};
+  }
+}
+
+/* ======================================================
+   Enemy Classes
+====================================================== */
+class Enemy {
+  constructor(x,y,type="grunt"){
+    this.x=x; this.y=y; this.type=type;
+
+    this.hp = (type==="miniboss"?140:35);
+    this.flash=0;
+    this.fire=rand(1,2);
+
+    this.phase=0;
+  }
+
+  update(dt){
+    let a = angleTo(this.x,this.y,player.x,player.y);
+
+    if(this.type==="grunt"){
+      this.x += Math.cos(a)*110*dt;
+      this.y += Math.sin(a)*110*dt;
+    }
+    if(this.type==="zigzag"){
+      this.phase += dt*4;
+      this.x += Math.cos(a)*90*dt + Math.cos(this.phase)*30*dt;
+      this.y += Math.sin(a)*90*dt;
+    }
+    if(this.type==="miniboss"){
+      // 不移動，但稍微左右飄浮
+      this.phase += dt*1.2;
+      this.x += Math.cos(this.phase)*20*dt;
+    }
+
+    /* 發射 */
+    this.fire -= dt;
+    if(this.fire <= 0){
+      this.fire = (this.type==="miniboss"?1.2:1.6);
+      shootEnemyBullet(this, a, this.type==="miniboss");
+    }
+
+    if(this.hp < 18)
+      this.flash = (this.flash+dt)%0.2;
+  }
+
+  draw(){
+    ctx.save();
+    ctx.translate(this.x,this.y);
+
+    if(this.hp<18 && this.flash<0.1)
+      ctx.fillStyle="rgb(255,60,60)";
+    else
+      ctx.fillStyle=(this.type==="miniboss"?"#cc0":"#c80");
+
+    ctx.beginPath();
+    ctx.arc(0,0,this.type==="miniboss"?25:12,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+}
+
+/* ======================================================
+   Boss (Low Civilization)
+====================================================== */
+class Boss {
+  constructor(){
+    this.x = canvas.width/2;
+    this.y = 120;
+
+    this.hp = 650;
+
+    this.phase = 0;
+    this.timer = 0;
+    this.flash=0;
+  }
+
+  update(dt){
+    this.timer += dt;
+
+    if(this.hp < 120)
+      this.flash = (this.flash+dt)%0.1;
+
+    // 攻擊模組
+    if(this.phase===0 && this.timer>2){
+      bossMissile();
+      nextBossPhase(this);
+    }
+    else if(this.phase===1 && this.timer>4){
+      bossRain();
+      nextBossPhase(this);
+    }
+    else if(this.phase===2 && this.timer>4){
+      bossCircle();
+      nextBossPhase(this);
+    }
+    else if(this.phase===3 && this.timer>5){
+      bossScatter();
+      nextBossPhase(this);
+    }
+  }
+
+  draw(){
+    ctx.save();
+    ctx.translate(this.x,this.y);
+
+    if(this.hp<120 && this.flash<0.05)
+      ctx.fillStyle="rgb(255,50,50)";
+    else
+      ctx.fillStyle="#ff0";
+
+    ctx.beginPath();
+    ctx.arc(0,0,44,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+}
+
+function nextBossPhase(b){
+  b.phase = (b.phase+1)%4;
+  b.timer=0;
+}
+
+/* ======================================================
+   Boss Attack Modules
+====================================================== */
+// M1: 大追蹤魚雷
+function bossMissile(){
+  let a = angleTo(boss.x,boss.y,player.x,player.y);
+  enemyBullets.push({
+    x:boss.x, y:boss.y,
+    vx:Math.cos(a)*160,
+    vy:Math.sin(a)*160,
+    missile:true
+  });
+}
+
+// M2: 小魚雷雨
+function bossRain(){
+  for(let i=0;i<12;i++){
+    enemyBullets.push({
+      x:boss.x + rand(-100,100),
+      y:boss.y + rand(-20,20),
+      vx:rand(-60,60),
+      vy:300
+    });
+  }
+}
+
+// M3: 圓形包夾
+function bossCircle(){
+  let cx=player.x, cy=player.y;
+  let r=200;
+  for(let i=0;i<8;i++){
+    let ang = i*(Math.PI*2/8);
+    enemies.push(new Enemy(cx+Math.cos(ang)*r, cy+Math.sin(ang)*r, "grunt"));
+  }
+}
+
+// M4: 大散射
+function bossScatter(){
+  for(let i=-10;i<=10;i++){
+    let ang = Math.PI/2 + i*0.1;
+    enemyBullets.push({
+      x:boss.x, y:boss.y,
+      vx:Math.cos(ang)*220,
+      vy:Math.sin(ang)*220
+    });
+  }
+}
+
+/* ======================================================
+   Enemy Bullets
+====================================================== */
+function shootEnemyBullet(e,angle,big){
+  enemyBullets.push({
+    x:e.x, y:e.y,
+    vx:Math.cos(angle)*250,
+    vy:Math.sin(angle)*250,
+    big:big
+  });
+}
+
+/* ======================================================
+   Round Manager
+====================================================== */
+function startDemo(){
+  round=1;
+  enemies=[]; bullets=[]; enemyBullets=[];
+  boss=null;
+  player = new Player();
+  spawnRound(1);
+
+  document.getElementById("roundInfo").innerText="Round 1";
+}
+
+function spawnRound(r){
+  if(r===1){
+    for(let i=0;i<6;i++){
+      enemies.push(new Enemy(rand(50,canvas.width-50), -20, i%2?"grunt":"zigzag"));
+    }
+  }
+  if(r===2){
+    for(let i=0;i<10;i++){
+      enemies.push(new Enemy(rand(50,canvas.width-50), -20, i%2?"zigzag":"grunt"));
+    }
+    enemies.push(new Enemy(canvas.width/2,150,"miniboss"));
+  }
+  if(r===3){
+    boss = new Boss();
+  }
+}
+
+function setDifficulty(d){ difficulty=d; }
+
+/* ======================================================
+   Main Loop
+====================================================== */
+let last=0;
+function loop(ts){
+  let dt = (ts-last)/1000; last=ts;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+function update(dt){
+  if(!player) return;
+
+  player.update(dt);
+
+  // Player bullets
+  bullets = bullets.filter(b=>{
+    b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt;
+    return b.life>0;
+  });
+
+  // Enemy update
+  enemies = enemies.filter(e=>{
+    e.update(dt);
+
+    if(dist(e,player)<20 && player.iframes<=0 && difficulty!=="god"){
+      player.hp -= 10;
+      player.iframes = 1;
+    }
+
+    for(let p of bullets){
+      if(dist(p,e)<20){
+        e.hp -= 20;
+        p.life = 0;
+      }
+    }
+
+    return e.hp>0;
+  });
+
+  // Boss update
+  if(boss){
+    boss.update(dt);
+
+    if(dist(boss,player)<50 && player.iframes<=0 && difficulty!=="god"){
+      player.hp -= 20;
+      player.iframes = 1;
+    }
+
+    for(let p of bullets){
+      if(dist(p,boss)<50){
+        boss.hp -= 20;
+        p.life=0;
+      }
+    }
+
+    if(boss.hp<=0){
+      boss=null;
+      round++;
+      spawnRound(round);
+      document.getElementById("roundInfo").innerText="Round "+round;
+    }
+  }
+
+  // Enemy bullets
+  enemyBullets = enemyBullets.filter(b=>{
+    b.x+=b.vx*dt; b.y+=b.vy*dt;
+
+    if(dist(b,player)<20 && player.iframes<=0 && difficulty!=="god"){
+      player.hp -= (b.missile?30:(b.big?18:10));
+      player.iframes = 1;
+    }
+
+    return b.x>-30 && b.x<canvas.width+30 && b.y>-30 && b.y<canvas.height+30;
+  });
+}
+
+function draw(){
+  ctx.fillStyle="#000";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  player.draw();
+
+  for(let b of bullets){
+    ctx.fillStyle="#fff";
+    ctx.beginPath();
+    ctx.arc(b.x,b.y,4,0,Math.PI*2);
+    ctx.fill();
+  }
+
+  for(let e of enemies) e.draw();
+  if(boss) boss.draw();
+
+  for(let b of enemyBullets){
+    ctx.fillStyle=b.missile?"#f33": (b.big?"#fa0":"#f80");
+    ctx.beginPath();
+    ctx.arc(b.x,b.y,b.missile?14:(b.big?9:5),0,Math.PI*2);
+    ctx.fill();
+  }
+}
+
+/* ======================================================
+   Input
+====================================================== */
+document.addEventListener("keydown",e=>{
+  keys[e.key]=true;
+
+  if(e.key==="z"||e.key==="Z") fireTorpedo();
+  if(e.key==="x"||e.key==="X") dash();
+});
+document.addEventListener("keyup",e=>{
+  keys[e.key]=false;
+});
+</script>
+</body>
+</html>

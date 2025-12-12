@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>完整球體護盾（中心可顯示特效）</title>
+<style>
+  body {
+    margin:0;
+    background:#000;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    height:100vh;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="c" width="600" height="600"></canvas>
+
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+const W = canvas.width, H = canvas.height;
+const cx = W/2, cy = H/2;
+
+const R_OUT = 200; // 只有一個外圓，不再空心
+const HEX = 18;
+
+const IMPACT_MIN_R = R_OUT - 40;
+const IMPACT_MAX_R = R_OUT - 10;
+
+const HIT_TIME = 1300;
+const hits = [];
+
+// 六邊形
+function hex(x,y,s){
+  ctx.beginPath();
+  for(let i=0;i<6;i++){
+    const t=i*Math.PI/3 + Math.PI/6;
+    ctx.lineTo(x+s*Math.cos(t), y+s*Math.sin(t));
+  }
+  ctx.closePath();
+}
+
+// 球面角距離
+function sphericalDistance(x1,y1, x2,y2){
+  const dot = x1*x2 + y1*y2;
+  const cosv = Math.min(1, Math.max(-1, dot/(R_OUT*R_OUT)));
+  return Math.acos(cosv); // 0~PI
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+
+  const now = performance.now();
+
+  // 球心光暈（讓球看起來是實心的）
+  ctx.save();
+  const g = ctx.createRadialGradient(cx,cy,0, cx,cy,R_OUT);
+  g.addColorStop(0,"rgba(20,30,60,0.7)");
+  g.addColorStop(1,"rgba(0,0,0,0)");
+  ctx.fillStyle=g;
+  ctx.fillRect(0,0,W,H);
+  ctx.restore();
+
+  for(let i=hits.length-1;i>=0;i--){
+    const h=hits[i];
+    const dt = now - h.time;
+
+    if(dt > HIT_TIME){
+      hits.splice(i,1);
+      continue;
+    }
+
+    const t = dt/HIT_TIME;
+    drawHexGlow(h,t);
+    drawSphereWave(h,t);
+  }
+
+  requestAnimationFrame(render);
+}
+
+function drawHexGlow(hit,t){
+  const sqrt3=Math.sqrt(3);
+  const RANGE=22;
+  const fade=1-t;
+
+  ctx.save();
+  ctx.translate(cx,cy);
+
+  // 只有外圓，不再空心
+  ctx.beginPath();
+  ctx.arc(0,0,R_OUT,0,Math.PI*2);
+  ctx.closePath();
+  ctx.clip();
+
+  for(let q=-RANGE;q<=RANGE;q++){
+    for(let r=-RANGE;r<=RANGE;r++){
+
+      const x = HEX*(sqrt3*q + sqrt3/2*r);
+      const y = HEX*(1.5*r);
+
+      const d = Math.sqrt(x*x+y*y);
+      if(d > R_OUT) continue; // 中心不再空
+
+      // 球面距離
+      const ang = sphericalDistance(x,y, hit.ix,hit.iy);
+
+      const impactArc = Math.PI/3;
+      const near = Math.max(0, 1-ang/impactArc);
+
+      const radialFade = 0.3 + 0.7*(d/R_OUT);
+
+      const L = near * radialFade * fade;
+      if(L < 0.03) continue;
+
+      ctx.strokeStyle = `rgba(150,220,255,${0.25+0.75*L})`;
+      ctx.lineWidth = 1.1;
+      hex(x,y,HEX);
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
+}
+
+function drawSphereWave(hit,t){
+  const fade = 1-t;
+
+  const arcR = t * Math.PI;           // 球面半徑 = 0~180°
+  const thick = Math.PI/28;           // 波紋厚度（角度）
+
+  ctx.save();
+  ctx.translate(cx,cy);
+
+  ctx.beginPath();
+  ctx.arc(0,0,R_OUT,0,Math.PI*2);
+  ctx.closePath();
+  ctx.clip();
+
+  const sqrt3=Math.sqrt(3);
+  const RANGE=22;
+
+  for(let q=-RANGE;q<=RANGE;q++){
+    for(let r=-RANGE;r<=RANGE;r++){
+      const x = HEX*(sqrt3*q + sqrt3/2*r);
+      const y = HEX*(1.5*r);
+
+      const d = Math.sqrt(x*x+y*y);
+      if(d > R_OUT) continue;
+
+      const ang = sphericalDistance(x,y, hit.ix,hit.iy);
+
+      const diff = Math.abs(ang - arcR);
+      if(diff > thick) continue;
+
+      const L = Math.max(0,1-diff/thick)*fade;
+
+      ctx.strokeStyle = `rgba(180,230,255,${0.3+0.7*L})`;
+      ctx.lineWidth=1.8;
+      hex(x,y,HEX);
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
+}
+
+canvas.addEventListener("click",(e)=>{
+  const rect=canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left - cx;
+  const y = e.clientY - rect.top - cy;
+  const d = Math.sqrt(x*x+y*y);
+
+  if(d > R_OUT) return;
+
+  const angle = Math.atan2(y,x);
+
+  let impactR = Math.min(IMPACT_MAX_R, Math.max(IMPACT_MIN_R, d));
+
+  const ix = Math.cos(angle)*impactR;
+  const iy = Math.sin(angle)*impactR;
+
+  hits.push({
+    ix, iy,
+    time: performance.now()
+  });
+});
+
+render();
+</script>
+
+</body>
+</html>

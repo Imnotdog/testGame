@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>PNG 自動裁切工具</title>
+<style>
+    body {
+        font-family: sans-serif;
+        background: #111;
+        color: #ddd;
+        padding: 20px;
+    }
+    input, button {
+        margin: 6px;
+        padding: 6px;
+        font-size: 16px;
+    }
+    #preview {
+        margin-top: 20px;
+        background: #222;
+        padding: 10px;
+    }
+</style>
+</head>
+<body>
+
+<h2>PNG 自動裁切工具（Sprite Sheet Cutter）</h2>
+
+<input type="file" id="fileInput" accept="image/*"><br>
+
+<label>行數 (Rows): </label>
+<input id="rows" type="number" value="2" min="1">
+
+<label>列數 (Cols): </label>
+<input id="cols" type="number" value="2" min="1">
+
+<button id="cutBtn">裁切</button>
+
+<div id="preview"></div>
+
+<script>
+const fileInput = document.getElementById("fileInput");
+const cutBtn = document.getElementById("cutBtn");
+const preview = document.getElementById("preview");
+
+let uploadedImg = null;
+
+fileInput.addEventListener("change", function(e) {
+    const file = e.target.files[0];
+    const reader = new FileReader();
+    reader.onload = evt => {
+        uploadedImg = new Image();
+        uploadedImg.src = evt.target.result;
+        uploadedImg.onload = () => {
+            preview.innerHTML = `<p>已載入圖片：${uploadedImg.width} × ${uploadedImg.height}</p>`;
+        };
+    };
+    reader.readAsDataURL(file);
+});
+
+cutBtn.addEventListener("click", function() {
+    if (!uploadedImg) {
+        alert("請先上傳圖片！");
+        return;
+    }
+    const rows = parseInt(document.getElementById("rows").value);
+    const cols = parseInt(document.getElementById("cols").value);
+
+    const tileW = uploadedImg.width / cols;
+    const tileH = uploadedImg.height / rows;
+
+    preview.innerHTML = "<h3>裁切結果預覽（每一格自動下載）</h3>";
+
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+
+            const canvas = document.createElement("canvas");
+            canvas.width = tileW;
+            canvas.height = tileH;
+            const ctx = canvas.getContext("2d");
+
+            ctx.drawImage(
+                uploadedImg,
+                c * tileW, r * tileH, tileW, tileH,
+                0, 0, tileW, tileH
+            );
+
+            const dataURL = canvas.toDataURL("image/png");
+
+            // 自動下載
+            const link = document.createElement("a");
+            link.href = dataURL;
+            link.download = `slice_${r}_${c}.png`;
+            link.click();
+
+            // 預覽顯示
+            const imgPreview = document.createElement("img");
+            imgPreview.src = dataURL;
+            imgPreview.style.margin = "5px";
+            imgPreview.style.border = "1px solid #444";
+            imgPreview.style.width = tileW / 2 + "px";
+            preview.appendChild(imgPreview);
+        }
+    }
+});
+</script>
+
+</body>
+</html>

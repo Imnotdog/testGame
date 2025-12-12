@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>WebRTC 雙人聊天 / LAN 遊戲雛型</title>
+<style>
+  body { font-family: system-ui; padding: 20px; line-height: 1.5; }
+  label { display: block; margin-top: 8px; }
+  input, button { padding: 6px 10px; margin-top: 4px; }
+  #log { border: 1px solid #ccc; height: 240px; overflow-y: auto; padding: 8px; white-space: pre-line; background:#fafafa; }
+  #peers { border: 1px solid #ccc; padding: 8px; min-height: 40px; background:#f6f6f6; }
+  .row { margin-top: 10px; }
+  button { margin-right: 6px; }
+  .inline { display: inline-block; margin-right: 10px; }
+</style>
+</head>
+<body>
+<h2>WebRTC 雙人聊天 / LAN 遊戲（Host 權威 + 客戶端預測骨架）</h2>
+
+<label>Signaling Server</label>
+<input id="wsUrl" size="50" value="wss://marie-nonfrangible-impressedly.ngrok-free.dev">
+
+<label>Room</label>
+<input id="room" value="class-001">
+
+<div class="row">
+  <label>暱稱</label>
+  <input id="nickname" placeholder="輸入暱稱" value="Player">
+</div>
+
+<div class="row">
+  <label>模式</label>
+  <label class="inline"><input type="radio" name="mode" value="host" checked> 我要當 Host</label>
+  <label class="inline"><input type="radio" name="mode" value="client"> 我要加入別人</label>
+  <button id="connect">Connect</button>
+</div>
+
+<div class="row">
+  <strong>自己：</strong> <span id="selfId">-</span> (<span id="selfNick">-</span>)
+  <span style="margin-left:12px;"><strong>Host：</strong> <span id="hostId">-</span> (<span id="hostNick">-</span>)</span>
+</div>
+<div class="row">
+  <strong>玩家清單</strong>
+  <div id="peers"></div>
+</div>
+
+<div class="row">
+  <button id="startBtn" disabled>開始遊戲（Host）</button>
+  <button id="pauseBtn" disabled>暫停</button>
+  <button id="resumeBtn" disabled>繼續</button>
+  <button id="endBtn" disabled>結束</button>
+</div>
+
+<div id="log" class="row"></div>
+
+<div class="row">
+  <input id="msg" placeholder="訊息" size="40">
+  <button id="send" disabled>Send</button>
+</div>
+
+<script>
+// ===== WebRTC ICE config =====
+const ICE_CONF = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    {
+      urls: 'turn:relay1.expressturn.com:3480?transport=tcp',
+      username: '000000002077866298',
+      credential: 'I1hhD86oxGbKHoCJr2Uy2LHo6a8='
+    },
+    {
+      urls: 'turns:relay1.expressturn.com:5349',
+      username: '000000002077866298',
+      credential: 'I1hhD86oxGbKHoCJr2Uy2LHo6a8='
+    }
+  ],
+  iceTransportPolicy: 'relay'
+};
+
+// 全域狀態
+let ws, selfId = null, hostId = null, selfNick = 'Player';
+const peers = new Map(); // peerId -> { pc, reliable, fast, nickname, mode }
+const logBox = document.getElementById('log');
+const sendBtn = document.getElementById('send');
+const msgInput = document.getElementById('msg');
+const startBtn = document.getElementById('startBtn');
+const pauseBtn = document.getElementById('pauseBtn');
+const resumeBtn = document.getElementById('resumeBtn');
+const endBtn = document.getElementById('endBtn');
+let gameState = 'idle'; // idle | running | paused | ended
+
+// 簡單配色：host = 藍色，client = 紅色（之後可換成飛船皮膚）
+const colorMap = new Map();
+const colorFor = (id, mode) => {
+  if (colorMap.has(id)) return colorMap.get(id);
+  const color = mode === 'host' ? '#2d7bff' : '#e04545';
+  colorMap.set(id, color);
+  return color;
+};
+
+const log = t => {
+  logBox.textContent += t + '\n';
+  logBox.scrollTop = logBox.scrollHeight;
+};
+
+const updatePeerView = () => {
+  const box = document.getElementById('peers');
+  const items = [];
+  for (const [id, p] of peers.entries()) {
+    const rel = p.reliable?.readyState || 'n/a';
+    const fast = p.fast?.readyState || 'n/a';
+    items.push(`${p.nickname || id}${id === hostId ? ' (host)' : ''} | id:${id} | reliable:${rel} fast:${fast}`);
+  }
+  box.textContent = items.length ? items.join('\n') : '（無其他玩家）';
+  document.getElementById('selfId').textContent = selfId || '-';
+  document.getElementById('selfNick').textContent = selfNick || '-';
+  document.getElementById('hostId').textContent = hostId || '-';
+  const hostPeer = hostId ? peers.get(hostId) : null;
+  document.getElementById('hostNick').textContent = hostPeer?.nickname || '-';
+  const isHost = selfId && hostId && selfId === hostId;
+  // 雙人限制：有 1 位對手才可開始
+  startBtn.disabled = !isHost || peers.size === 0 || gameState !== 'idle';
+  pauseBtn.disabled = !isHost || gameState !== 'running';
+  resumeBtn.disabled = !isHost || gameState !== 'paused';
+  endBtn.disabled = !isHost || (gameState !== 'running' && gameState !== 'paused');
+};
+
+// 連線流程
+document.getElementById('connect').onclick = () => {
+  cleanupAll();
+  const url = document.getElementById('wsUrl').value;
+  const room = document.getElementById('room').value;
+  selfNick = document.getElementById('nickname').value.trim() || 'Player';
+  const mode = document.querySelector('input[name="mode"]:checked')?.value || 'client';
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    log('Signaling connected');
+    ws.send(JSON.stringify({ type: 'join', room, nickname: selfNick, mode }));
+  };
+
+  ws.onmessage = async e => {
+    const m = JSON.parse(e.data);
+    if (m.type === 'room-full') {
+      log('房間已滿（限制 2 人），請換房號。');
+      try { ws.close(); } catch {}
+      return;
+    }
+    if (m.type === 'welcome') {
+      selfId = m.selfId;
+      hostId = m.hostId;
+      const hostNickname = m.hostNickname || (hostId === selfId ? selfNick : '');
+      if (hostId === selfId) colorFor(selfId, 'host');
+      log(`已連線，自己的 ID: ${selfId}，Host: ${hostId}`);
+      // 把現有 peers 加入（只有 1 人的情境）
+      for (const peerInfo of m.peers) {
+        const peer = ensurePeer(peerInfo.id, true, peerInfo.nickname, peerInfo.mode);
+        colorFor(peerInfo.id, peerInfo.mode);
+      }
+      updatePeerView();
+      document.getElementById('hostNick').textContent = hostNickname || '-';
+    } else if (m.type === 'new-peer') {
+      log(`新玩家加入: ${m.nickname || m.id}`);
+      const peer = ensurePeer(m.id, true, m.nickname, m.mode);
+      colorFor(m.id, m.mode);
+      updatePeerView();
+    } else if (m.type === 'leave') {
+      log(`玩家離開: ${m.id}`);
+      closePeer(m.id);
+    } else if (m.type === 'host-changed') {
+      hostId = m.hostId;
+      document.getElementById('hostNick').textContent = m.hostNickname || '-';
+      log(`Host 變更為: ${hostId}`);
+      updatePeerView();
+    } else if (m.type === 'offer') {
+      await handleOffer(m);
+    } else if (m.type === 'answer') {
+      await handleAnswer(m);
+    } else if (m.type === 'candidate') {
+      await handleCandidate(m);
+    }
+  };
+
+  ws.onclose = () => log('Signaling closed');
+  ws.onerror = () => log('Signaling error');
+};
+
+function ensurePeer(peerId, initiator, nickname = '', mode = 'client') {
+  if (peerId === selfId) return;
+  if (peers.has(peerId)) return peers.get(peerId);
+  if (peers.size >= 1) {
+    log('已達雙人上限，忽略多餘的 peer。');
+    return;
+  }
+
+  const pc = new RTCPeerConnection(ICE_CONF);
+  const peer = { pc, reliable: null, fast: null, id: peerId, nickname: nickname || 'Peer', mode };
+  peers.set(peerId, peer);
+
+  pc.onicecandidate = e => {
+    if (e.candidate) ws?.send(JSON.stringify({ type: 'candidate', to: peerId, candidate: e.candidate }));
+  };
+  pc.onconnectionstatechange = () => log(`ICE(${peer.nickname}): ${pc.connectionState}`);
+  pc.ondatachannel = e => handleDataChannel(peer, e.channel);
+
+  if (initiator) {
+    peer.reliable = pc.createDataChannel('reliable');
+    setupReliable(peer, peer.reliable);
+    peer.fast = pc.createDataChannel('fast', { ordered: false, maxRetransmits: 0 });
+    setupFast(peer, peer.fast);
+    startOffer(peer);
+  }
+
+  updatePeerView();
+  return peer;
+}
+
+async function startOffer(peer) {
+  const offer = await peer.pc.createOffer();
+  await peer.pc.setLocalDescription(offer);
+  ws?.send(JSON.stringify({ type: 'offer', to: peer.id, sdp: peer.pc.localDescription }));
+}
+
+async function handleOffer(msg) {
+  const peer = ensurePeer(msg.from, false);
+  if (!peer) return;
+  await peer.pc.setRemoteDescription(msg.sdp);
+  const answer = await peer.pc.createAnswer();
+  await peer.pc.setLocalDescription(answer);
+  ws?.send(JSON.stringify({ type: 'answer', to: peer.id, sdp: peer.pc.localDescription }));
+}
+
+async function handleAnswer(msg) {
+  const peer = peers.get(msg.from);
+  if (!peer) return;
+  await peer.pc.setRemoteDescription(msg.sdp);
+}
+
+async function handleCandidate(msg) {
+  const peer = peers.get(msg.from);
+  if (!peer || !msg.candidate) return;
+  await peer.pc.addIceCandidate(msg.candidate);
+}
+
+function handleDataChannel(peer, ch) {
+  if (ch.label === 'reliable') {
+    peer.reliable = ch;
+    setupReliable(peer, ch);
+  } else if (ch.label === 'fast') {
+    peer.fast = ch;
+    setupFast(peer, ch);
+  } else {
+    log(`未知的 DataChannel: ${ch.label}`);
+  }
+  updatePeerView();
+}
+
+function setupReliable(peer, ch) {
+  ch.onopen = () => {
+    log(`可靠通道開啟 ↔ ${peer.nickname}`);
+    sendBtn.disabled = false;
+    updatePeerView();
+  };
+  ch.onclose = () => {
+    log(`可靠通道關閉 ↔ ${peer.nickname}`);
+    updatePeerView();
+  };
+  ch.onmessage = e => handleReliableMessage(peer, e.data);
+  ch.onerror = e => log(`可靠通道錯誤(${peer.nickname}): ${e?.message || e}`);
+}
+
+function setupFast(peer, ch) {
+  ch.onopen = () => {
+    log(`快速通道開啟 ↔ ${peer.nickname}`);
+    updatePeerView();
+  };
+  ch.onclose = () => {
+    log(`快速通道關閉 ↔ ${peer.nickname}`);
+    updatePeerView();
+  };
+  ch.onmessage = e => handleFastMessage(peer, e.data);
+  ch.onerror = e => log(`快速通道錯誤(${peer.nickname}): ${e?.message || e}`);
+}
+
+function handleReliableMessage(peer, data) {
+  let msg;
+  try { msg = JSON.parse(data); } catch { return; }
+  if (msg.type === 'chat') {
+    log(`對方(${peer.nickname})：${msg.text}`);
+  } else if (msg.type === 'control') {
+    applyControl(msg.action, msg.ts, peer.nickname);
+  } else if (msg.type === 'state') {
+    // host 廣播的低頻狀態快照，之後可在這裡套用到遊戲狀態
+  }
+}
+
+function handleFastMessage(peer, data) {
+  let msg;
+  try { msg = JSON.parse(data); } catch { return; }
+  if (msg.type === 'input') {
+    // 客戶端預測：收集他人輸入並套用/校正，本範例先留接口
+  } else if (msg.type === 'delta') {
+    // Host 可用 fast 通道傳差分更新
+  }
+}
+
+function sendReliableAll(payload) {
+  const s = JSON.stringify(payload);
+  for (const p of peers.values()) {
+    if (p.reliable && p.reliable.readyState === 'open') p.reliable.send(s);
+  }
+}
+
+function sendFastAll(payload) {
+  const s = JSON.stringify(payload);
+  for (const p of peers.values()) {
+    if (p.fast && p.fast.readyState === 'open') p.fast.send(s);
+  }
+}
+
+// 聊天
+sendBtn.onclick = () => {
+  const m = msgInput.value.trim();
+  if (!m) return;
+  sendReliableAll({ type: 'chat', text: m, from: selfId, nickname: selfNick, ts: Date.now() });
+  log(`我：${m}`);
+  msgInput.value = '';
+};
+
+// Host 控制遊戲狀態
+startBtn.onclick = () => {
+  if (!isHost()) return;
+  gameState = 'running';
+  sendReliableAll({ type: 'control', action: 'start', ts: Date.now(), from: selfId });
+  log('遊戲開始（已廣播）');
+  updatePeerView();
+};
+pauseBtn.onclick = () => {
+  if (!isHost()) return;
+  gameState = 'paused';
+  sendReliableAll({ type: 'control', action: 'pause', ts: Date.now(), from: selfId });
+  log('遊戲暫停（已廣播）');
+  updatePeerView();
+};
+resumeBtn.onclick = () => {
+  if (!isHost()) return;
+  gameState = 'running';
+  sendReliableAll({ type: 'control', action: 'resume', ts: Date.now(), from: selfId });
+  log('遊戲繼續（已廣播）');
+  updatePeerView();
+};
+endBtn.onclick = () => {
+  if (!isHost()) return;
+  gameState = 'ended';
+  sendReliableAll({ type: 'control', action: 'end', ts: Date.now(), from: selfId });
+  log('遊戲結束（已廣播）');
+  updatePeerView();
+};
+
+function applyControl(action, ts, fromNick) {
+  gameState = action === 'start' ? 'running'
+    : action === 'pause' ? 'paused'
+    : action === 'resume' ? 'running'
+    : action === 'end' ? 'ended'
+    : gameState;
+  log(`控制訊息：${action} 來自 ${fromNick} @${ts}`);
+  updatePeerView();
+}
+
+function isHost() {
+  return selfId && hostId && selfId === hostId;
+}
+
+function closePeer(peerId) {
+  const peer = peers.get(peerId);
+  if (!peer) return;
+  try { peer.reliable?.close(); } catch {}
+  try { peer.fast?.close(); } catch {}
+  try { peer.pc?.close(); } catch {}
+  peers.delete(peerId);
+  updatePeerView();
+}
+
+function cleanupAll() {
+  for (const id of Array.from(peers.keys())) closePeer(id);
+  if (ws) {
+    try { ws.close(); } catch {}
+    ws = null;
+  }
+  selfId = null;
+  hostId = null;
+  gameState = 'idle';
+  sendBtn.disabled = true;
+  updatePeerView();
+  log('---- 重新連線 ----');
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>Enhanced Laser VFX Demo</title>
+<style>
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: radial-gradient(circle at center, #06070d, #000);
+  }
+  canvas {
+    position: absolute;
+    inset: 0;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+function resize() {
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
+}
+resize(); window.onresize = resize;
+
+// ======================================
+// Player
+// ======================================
+const player = {
+  x: canvas.width/2,
+  y: canvas.height*0.75,
+  angle: -Math.PI/2
+};
+
+// ======================================
+// Laser States
+// ======================================
+let isCharging = false;
+let chargeTime = 0;     // 0 → 1
+let firingTime = 0;     // 持續時間
+const chargeParticles = [];
+const lightningArcs = [];
+
+// ======================================
+// Utility
+// ======================================
+function rand(a,b){ return a + Math.random()*(b-a); }
+
+function drawLightning(x1, y1, x2, y2, alpha=1) {
+  ctx.save();
+  ctx.strokeStyle = `rgba(160,220,255,${alpha})`;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x1,y1);
+
+  const steps = 8;
+  for (let i=1;i<steps;i++){
+    const t = i/steps;
+    const nx = x1+(x2-x1)*t + (Math.random()-0.5)*18;
+    const ny = y1+(y2-y1)*t + (Math.random()-0.5)*18;
+    ctx.lineTo(nx,ny);
+  }
+
+  ctx.lineTo(x2,y2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ======================================
+// Charging particles
+// ======================================
+function spawnChargeParticle() {
+  chargeParticles.push({
+    x: player.x + rand(-6,6),
+    y: player.y + rand(-6,6),
+    vx: rand(-20,20),
+    vy: rand(-35,-10),
+    life: rand(0.4,0.8),
+    size: rand(1.8,3.4)
+  });
+}
+
+function updateChargeParticles(dt) {
+  for (let i=chargeParticles.length-1; i>=0; i--) {
+    const p = chargeParticles[i];
+    p.x += p.vx*dt;
+    p.y += p.vy*dt;
+    p.life -= dt;
+    if (p.life <= 0) chargeParticles.splice(i,1);
+  }
+}
+
+function drawChargeParticles() {
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const p of chargeParticles) {
+    ctx.globalAlpha = p.life * 1.4;
+    ctx.fillStyle = "rgba(140,200,255,1)";
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ======================================
+// Draw Laser Beam
+// ======================================
+function drawLaserBeam() {
+  const LEN = 700;
+  const x1 = player.x;
+  const y1 = player.y;
+  const x2 = x1 + Math.sin(player.angle)*LEN;
+  const y2 = y1 - Math.cos(player.angle)*LEN;
+
+  // === 外層大光暈 ===
+  ctx.save();
+  ctx.strokeStyle = "rgba(150,200,255,0.22)";
+  ctx.lineWidth = 40;
+  ctx.beginPath();
+  ctx.moveTo(x1,y1);
+  ctx.lineTo(x2,y2);
+  ctx.stroke();
+
+  // === 主光束（最粗、最亮） ===
+  ctx.strokeStyle = "rgba(230,250,255,1)";
+  ctx.lineWidth = 14;
+  ctx.beginPath();
+  ctx.moveTo(x1,y1);
+  ctx.lineTo(x2,y2);
+  ctx.stroke();
+
+  // === 內層能量核心線（細） ===
+  ctx.strokeStyle = "rgba(150,200,255,0.9)";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(x1,y1);
+  ctx.lineTo(x2,y2);
+  ctx.stroke();
+
+  // === 電弧（Lightning arcs）===
+  for (let i=0;i<4;i++){
+    const t = Math.random();
+    const lx = x1 + (x2-x1)*t;
+    const ly = y1 + (y2-y1)*t;
+    const ox = (Math.random()-0.5)*120;
+    const oy = (Math.random()-0.5)*120;
+    drawLightning(lx, ly, lx+ox, ly+oy, 0.8);
+  }
+
+  ctx.restore();
+}
+
+// ======================================
+// Draw Charging Core
+// ======================================
+function drawChargingCore() {
+  const pulse = 0.5 + Math.sin(chargeTime*8)*0.5;
+  const r = 10 + chargeTime*20 + pulse*4;
+
+  // 外層光圈
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.globalAlpha = 0.25 + chargeTime*0.5;
+  ctx.fillStyle = "rgba(140,200,255,1)";
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, r*1.4, 0, Math.PI*2);
+  ctx.fill();
+
+  // 內層核心
+  ctx.globalAlpha = 1.0;
+  ctx.fillStyle = "rgba(220,250,255,1)";
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, r*0.7, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+
+// ======================================
+// Update & Render
+// ======================================
+let last = performance.now();
+function loop(now){
+  const dt = Math.min((now-last)/1000,0.05);
+  last = now;
+
+  ctx.clearRect(0,0,canvas.width, canvas.height);
+
+  // CHARGING
+  if (isCharging){
+    chargeTime = Math.min(1, chargeTime + dt*1.4);
+    if (Math.random()<0.4) spawnChargeParticle();
+    updateChargeParticles(dt);
+
+    drawChargingCore();
+    drawChargeParticles();
+  }
+  else {
+    chargeTime = Math.max(0, chargeTime - dt*3);
+  }
+
+  // FIRING
+  if (firingTime > 0){
+    drawLaserBeam();
+    firingTime -= dt;
+  }
+
+  // Draw Player (simple)
+  ctx.fillStyle = "#99ccff";
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, 12, 0, Math.PI*2);
+  ctx.fill();
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+
+// ======================================
+// Controls
+// ======================================
+window.addEventListener("mousedown", ()=>{
+  isCharging = true;
+});
+
+window.addEventListener("mouseup", ()=>{
+  if (chargeTime > 0.15){      // 有充到才發射
+    firingTime = 0.5 + chargeTime*0.6; // 充越久射越久
+  }
+  isCharging = false;
+});
+</script>
+</body>
+</html>

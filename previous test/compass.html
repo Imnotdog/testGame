@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>Multi-Key Magic Compass Detector</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top, #1b2235 0, #050810 55%, #000000 100%);
+      color: #f5f5f5;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .app {
+      text-align: center;
+      max-width: 800px;
+      width: 100%;
+      padding: 24px;
+    }
+
+    h1 {
+      margin-bottom: 8px;
+      letter-spacing: 0.12em;
+      font-size: 1.15rem;
+      text-transform: uppercase;
+      color: #e0e4ff;
+    }
+
+    .subtitle {
+      font-size: 0.85rem;
+      margin-bottom: 24px;
+      color: #b8c1ff;
+      opacity: 0.9;
+    }
+
+    .compass-wrapper {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 16px;
+      perspective: 900px;
+    }
+
+    .compass-tilt {
+      transform: rotateX(32deg);
+      transform-style: preserve-3d;
+    }
+
+    .compass {
+      position: relative;
+      width: 280px;
+      height: 280px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 30% 15%, #ffffff30 0, #ffffff04 30%, transparent 55%),
+        radial-gradient(circle at 50% 130%, #000000 0, #000000 65%);
+      box-shadow:
+        0 0 0 4px #101014,
+        0 0 0 9px #333641,
+        0 25px 40px rgba(0, 0, 0, 0.92);
+      border: 1px solid #555a6b;
+      overflow: hidden;
+    }
+
+    .compass-inner {
+      position: absolute;
+      inset: 10%;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 50% 30%, #25304a 0, #0b1020 55%, #050713 100%);
+      border: 1px solid #3f4c70;
+      box-shadow:
+        inset 0 0 22px rgba(0, 0, 0, 0.9),
+        0 0 40px rgba(120, 170, 255, 0.18);
+    }
+
+    /* 魔法陣環：有 runes / 旋轉咒文感 */
+    .sigil-ring {
+      position: absolute;
+      inset: 19%;
+      border-radius: 50%;
+      border: 1px solid rgba(185, 220, 255, 0.38);
+      box-shadow:
+        0 0 12px rgba(0, 255, 215, 0.4),
+        inset 0 0 18px rgba(0, 120, 255, 0.28);
+      background:
+        conic-gradient(
+          from 0deg,
+          rgba(0,255,220,0.1) 0deg,
+          rgba(0,255,220,0.6) 18deg,
+          rgba(0,255,220,0.12) 36deg,
+          rgba(180,140,255,0.35) 54deg,
+          rgba(100,200,255,0.1) 72deg,
+          rgba(250,235,180,0.3) 90deg,
+          rgba(0,255,220,0.1) 108deg,
+          rgba(0,255,220,0.6) 126deg,
+          rgba(0,255,220,0.12) 144deg,
+          rgba(180,140,255,0.35) 162deg,
+          rgba(100,200,255,0.1) 180deg,
+          rgba(250,235,180,0.3) 198deg,
+          rgba(0,255,220,0.1) 216deg,
+          rgba(0,255,220,0.6) 234deg,
+          rgba(0,255,220,0.12) 252deg,
+          rgba(180,140,255,0.35) 270deg,
+          rgba(100,200,255,0.1) 288deg,
+          rgba(250,235,180,0.3) 306deg,
+          rgba(0,255,220,0.2) 324deg,
+          rgba(0,255,220,0.1) 360deg
+        );
+      mix-blend-mode: screen;
+      opacity: 0.85;
+      animation: spin-sigil 18s linear infinite;
+    }
+
+    @keyframes spin-sigil {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+
+    /* 內圈 runic 字樣（用虛線模擬 Ars / ER 魔法文字） */
+    .rune-ring {
+      position: absolute;
+      inset: 26%;
+      border-radius: 50%;
+      border: 1px dashed rgba(200, 235, 255, 0.45);
+      box-shadow:
+        0 0 14px rgba(120, 200, 255, 0.5),
+        inset 0 0 10px rgba(0, 0, 0, 0.8);
+      opacity: 0.85;
+      animation: spin-runes 28s linear infinite reverse;
+    }
+
+    @keyframes spin-runes {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(-360deg); }
+    }
+
+    .ticks {
+      position: absolute;
+      inset: 16%;
+      border-radius: 50%;
+    }
+
+    .tick {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 2px;
+      height: 12%;
+      background: linear-gradient(to bottom, #d0d8ff 0, #d0d8ff 60%, transparent 100%);
+      transform-origin: 50% 0%;
+      opacity: 0.45;
+    }
+
+    .tick.major {
+      width: 3px;
+      height: 17%;
+      opacity: 0.95;
+      background: linear-gradient(to bottom, #fff7d2 0, #d0e4ff 60%, transparent 100%);
+      box-shadow: 0 0 7px rgba(255, 240, 180, 0.8);
+    }
+
+    /* 16 方向標籤：沿圓周排，靠近外環 */
+    .labels16 {
+      position: absolute;
+      inset: 14%;
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    .label16 {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform-origin: 50% 50%;
+      text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+      white-space: nowrap;
+    }
+
+    .label16-main {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #fff4ce;
+    }
+
+    .label16-sub {
+      font-size: 0.58rem;
+      font-weight: 600;
+      color: #a8b6ff;
+      opacity: 0.9;
+    }
+
+    .needle {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 7px;
+      height: 60%;
+      transform-origin: 50% 50%; /* 以中心旋轉（修正：不再從一端旋轉） */
+      transform: translate(-50%, -50%) rotate(0deg);
+      transition: transform 0.18s cubic-bezier(0.34, 1.4, 0.64, 1);
+      filter: drop-shadow(0 0 10px rgba(0, 255, 220, 0.8));
+    }
+
+    .needle::before,
+    .needle::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      border-left: 9px solid transparent;
+      border-right: 9px solid transparent;
+    }
+
+    /* 指針前端：偏金色 + 冰藍光，走 ER 法術感 */
+    .needle::before {
+      top: -4px;
+      border-bottom: 78px solid #ffe4a8;
+      filter:
+        drop-shadow(0 0 6px rgba(255, 245, 200, 0.85))
+        drop-shadow(0 0 10px rgba(0, 255, 220, 0.7));
+    }
+
+    /* 指針後端：較短、偏藍 */
+    .needle::after {
+      bottom: -4px;
+      border-top: 48px solid #9fd5ff;
+      filter: drop-shadow(0 0 5px rgba(150, 215, 255, 0.9));
+    }
+
+    .needle-cap {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle, #f5f7ff 0, #c2c9ff 35%, #141829 80%);
+      transform: translate(-50%, -50%);
+      box-shadow:
+        0 0 4px rgba(0, 0, 0, 0.9),
+        inset 0 0 6px rgba(0, 0, 0, 0.9),
+        0 0 12px rgba(170, 230, 255, 0.8);
+    }
+
+    .glow-ring {
+      position: absolute;
+      inset: 4%;
+      border-radius: 50%;
+      box-shadow:
+        0 0 24px rgba(135, 206, 250, 0.35),
+        0 0 40px rgba(0, 255, 200, 0.18);
+      border: 1px solid rgba(200, 220, 255, 0.28);
+      pointer-events: none;
+    }
+
+    .direction-display {
+      margin-top: 20px;
+      font-size: 1.6rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #f5f7ff;
+      text-shadow: 0 0 12px rgba(0, 0, 0, 0.9);
+    }
+
+    .direction-display span {
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, #2b334f, #15192a);
+      border: 1px solid rgba(190, 210, 255, 0.5);
+      box-shadow:
+        0 0 12px rgba(0, 0, 0, 0.9),
+        0 0 22px rgba(120, 150, 255, 0.55);
+    }
+
+    .hint {
+      margin-top: 16px;
+      font-size: 0.8rem;
+      line-height: 1.6;
+      color: #c1c6e9;
+      opacity: 0.9;
+    }
+
+    .hint kbd {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid #556;
+      background: #111522;
+      font-size: 0.65rem;
+      font-family: "Cascadia Code", Consolas, monospace;
+      margin: 0 2px;
+    }
+
+    .status-row {
+      margin-top: 12px;
+      font-size: 0.75rem;
+      color: #9fa7d9;
+      opacity: 0.9;
+    }
+
+    .status-label {
+      color: #7bd8ff;
+    }
+
+    .pressed-keys {
+      font-family: "Cascadia Code", Consolas, monospace;
+      margin-top: 4px;
+      font-size: 0.7rem;
+      color: #c8cef8;
+    }
+
+    @media (max-width: 600px) {
+      .compass {
+        width: 220px;
+        height: 220px;
+      }
+
+      .direction-display {
+        font-size: 1.25rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <h1>Multi-Key Magic Compass Detector</h1>
+    <div class="subtitle">使用數字鍵盤或方向鍵，啟動魔法陣羅盤。</div>
+
+    <div class="compass-wrapper">
+      <div class="compass-tilt">
+        <div class="compass" aria-hidden="true">
+          <div class="glow-ring"></div>
+          <div class="compass-inner">
+            <div class="sigil-ring"></div>
+            <div class="rune-ring"></div>
+
+            <div class="ticks" id="ticks"></div>
+
+            <!-- 16 個方向標籤會由 JS 動態放到這裡 -->
+            <div class="labels16" id="labels16"></div>
+
+            <div class="needle" id="needle"></div>
+            <div class="needle-cap"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="direction-display">
+      Direction: <span id="directionLabel">None</span>
+    </div>
+
+    <div class="status-row">
+      <span class="status-label">Mode:</span>
+      <span id="modeLabel">Idle</span>
+    </div>
+    <div class="pressed-keys">
+      Numpad: <span id="numpadKeys">[]</span> |
+      Arrows: <span id="arrowKeys">[]</span>
+    </div>
+
+    <div class="hint">
+      使用數字鍵盤 <kbd>Num 1</kbd>–<kbd>Num 9</kbd> 控制 <strong>16 方位羅盤</strong>：<br />
+      例如 <kbd>Num 8</kbd> = N，<kbd>Num 8</kbd> + <kbd>Num 9</kbd> = NNE，<kbd>Num 6</kbd> = E...<br />
+      若沒有數字鍵被按下，則使用方向鍵 <kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> 控制 <strong>8 方位羅盤</strong>。
+    </div>
+  </div>
+
+  <script>
+    const numpadPressed = new Set(); // '1'..'9'
+    const arrowPressed  = new Set(); // 'Up','Down','Left','Right'
+
+    const directionLabel = document.getElementById("directionLabel");
+    const modeLabel      = document.getElementById("modeLabel");
+    const needleEl       = document.getElementById("needle");
+    const numpadKeysEl   = document.getElementById("numpadKeys");
+    const arrowKeysEl    = document.getElementById("arrowKeys");
+    const ticksContainer = document.getElementById("ticks");
+    const labels16Container = document.getElementById("labels16");
+
+    const dirOrder = [
+      "N","NNE","NE","ENE",
+      "E","ESE","SE","SSE",
+      "S","SSW","SW","WSW",
+      "W","WNW","NW","NNW"
+    ];
+
+    const directionAngles = {
+      "N": 0,
+      "NNE": 22.5,
+      "NE": 45,
+      "ENE": 67.5,
+      "E": 90,
+      "ESE": 112.5,
+      "SE": 135,
+      "SSE": 157.5,
+      "S": 180,
+      "SSW": 202.5,
+      "SW": 225,
+      "WSW": 247.5,
+      "W": 270,
+      "WNW": 292.5,
+      "NW": 315,
+      "NNW": 337.5
+    };
+
+    const numpadDirectionMap = {
+      "8": "N",
+      "89": "NNE",
+      "9": "NE",
+      "69": "ENE",
+      "6": "E",
+      "36": "ESE",
+      "3": "SE",
+      "23": "SSE",
+      "2": "S",
+      "12": "SSW",
+      "1": "SW",
+      "14": "WSW",
+      "4": "W",
+      "47": "WNW",
+      "7": "NW",
+      "78": "NNW"
+    };
+
+    // --- 建立 16 個刻度（每 22.5° 一格） ---
+    (() => {
+      for (let i = 0; i < 16; i++) {
+        const tick = document.createElement("div");
+        tick.classList.add("tick");
+        if (i % 4 === 0) tick.classList.add("major"); // N/E/S/W
+        tick.style.transform = `translate(-50%, -50%) rotate(${i * 22.5}deg)`;
+        ticksContainer.appendChild(tick);
+      }
+    })();
+
+    // --- 建立 16 個方向標籤：沿圓環排列 ---
+    (() => {
+      dirOrder.forEach((dir, i) => {
+        const angle = directionAngles[dir];
+        const label = document.createElement("div");
+        label.classList.add("label16");
+        if (i % 4 === 0) {
+          label.classList.add("label16-main");
+        } else {
+          label.classList.add("label16-sub");
+        }
+        label.textContent = dir;
+
+        // 把標籤放在圓環附近：
+        // 先從中心出發，旋轉到 angle，再往「上方」移動到半徑 ≈ 46%，最後把文字轉回正向
+        label.style.transform =
+          `translate(-50%, -50%) rotate(${angle}deg) translate(0, -46%) rotate(${-angle}deg)`;
+
+        labels16Container.appendChild(label);
+      });
+    })();
+
+    function updateDebugDisplay() {
+      numpadKeysEl.textContent = JSON.stringify(Array.from(numpadPressed).sort());
+      arrowKeysEl.textContent  = JSON.stringify(Array.from(arrowPressed).sort());
+    }
+
+    function getDirectionFromNumpad() {
+      if (numpadPressed.size === 0) return null;
+
+      const digits = Array.from(numpadPressed).filter(d => d !== "5").sort();
+      if (digits.length === 0) return null;
+
+      const allKey = digits.join("");
+      if (numpadDirectionMap[allKey]) {
+        return numpadDirectionMap[allKey];
+      }
+
+      if (digits.length >= 2) {
+        for (let i = 0; i < digits.length; i++) {
+          for (let j = i + 1; j < digits.length; j++) {
+            const pair = digits[i] + digits[j];
+            if (numpadDirectionMap[pair]) {
+              return numpadDirectionMap[pair];
+            }
+          }
+        }
+      }
+
+      if (digits.length >= 1 && numpadDirectionMap[digits[0]]) {
+        return numpadDirectionMap[digits[0]];
+      }
+      return null;
+    }
+
+    function getDirectionFromArrows() {
+      const up = arrowPressed.has("Up");
+      const down = arrowPressed.has("Down");
+      const left = arrowPressed.has("Left");
+      const right = arrowPressed.has("Right");
+
+      if (!up && !down && !left && !right) return null;
+
+      const verticalConflict   = up && down;
+      const horizontalConflict = left && right;
+
+      if (!verticalConflict && up   && !horizontalConflict && right) return "NE";
+      if (!verticalConflict && up   && !horizontalConflict && left)  return "NW";
+      if (!verticalConflict && down && !horizontalConflict && right) return "SE";
+      if (!verticalConflict && down && !horizontalConflict && left)  return "SW";
+
+      if (!verticalConflict && up   && !left && !right) return "N";
+      if (!verticalConflict && down && !left && !right) return "S";
+      if (!horizontalConflict && right && !up && !down) return "E";
+      if (!horizontalConflict && left  && !up && !down) return "W";
+
+      return null;
+    }
+
+    function updateCompass() {
+      let direction = null;
+      let mode = "Idle";
+
+      if (numpadPressed.size > 0) {
+        direction = getDirectionFromNumpad();
+        mode = "Numeric keypad (16-way)";
+      } else {
+        direction = getDirectionFromArrows();
+        mode = direction ? "Arrow keys (8-way)" : "Idle";
+      }
+
+      if (!direction) {
+        directionLabel.textContent = "None";
+        modeLabel.textContent = mode;
+        // 不改變針的角度（維持最後方向）
+        return;
+      }
+
+      directionLabel.textContent = direction;
+      modeLabel.textContent = mode;
+
+      const angle = directionAngles[direction];
+      if (typeof angle === "number") {
+        needleEl.style.transform = `translate(-50%, -50%) rotate(${angle}deg)`;
+      }
+    }
+
+    window.addEventListener("keydown", (e) => {
+      if (e.repeat) return;
+
+      const code = e.code;
+
+      // 數字鍵盤 1-9
+      if (/^Numpad[1-9]$/.test(code)) {
+        const digit = code.slice(-1);
+        numpadPressed.add(digit);
+        e.preventDefault();
+      }
+
+      if (code === "ArrowUp") {
+        arrowPressed.add("Up");
+        e.preventDefault();
+      } else if (code === "ArrowDown") {
+        arrowPressed.add("Down");
+        e.preventDefault();
+      } else if (code === "ArrowLeft") {
+        arrowPressed.add("Left");
+        e.preventDefault();
+      } else if (code === "ArrowRight") {
+        arrowPressed.add("Right");
+        e.preventDefault();
+      }
+
+      updateDebugDisplay();
+      updateCompass();
+    });
+
+    window.addEventListener("keyup", (e) => {
+      const code = e.code;
+
+      if (/^Numpad[1-9]$/.test(code)) {
+        const digit = code.slice(-1);
+        numpadPressed.delete(digit);
+        e.preventDefault();
+      }
+
+      if (code === "ArrowUp") {
+        arrowPressed.delete("Up");
+        e.preventDefault();
+      } else if (code === "ArrowDown") {
+        arrowPressed.delete("Down");
+        e.preventDefault();
+      } else if (code === "ArrowLeft") {
+        arrowPressed.delete("Left");
+        e.preventDefault();
+      } else if (code === "ArrowRight") {
+        arrowPressed.delete("Right");
+        e.preventDefault();
+      }
+
+      updateDebugDisplay();
+      updateCompass();
+    });
+  </script>
+</body>
+</html>
